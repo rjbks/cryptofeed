@@ -6,6 +6,8 @@ associated with this software.
 '''
 import asyncio
 import logging
+from datetime import datetime as dt
+from datetime import timedelta
 
 import websockets
 from websockets import ConnectionClosed
@@ -27,10 +29,12 @@ LOG = logging.getLogger('feedhandler')
 class FeedHandler(object):
     def __init__(self, retries=10):
         self.feeds = []
+        self.qos = {}
         self.retries = retries
 
     def add_feed(self, feed):
         self.feeds.append(feed)
+        self.qos[feed.id] = None
 
     def add_nbbo(self, feeds, pairs, callback):
         cb = NBBO(callback, pairs)
@@ -53,22 +57,43 @@ class FeedHandler(object):
     def _run(self):
         feeds = [asyncio.ensure_future(self._connect(feed)) for feed in self.feeds]
         _, _ = yield from asyncio.wait(feeds)
+    
+    async def _watch(self, feed_id, websocket):
+        print("Started a watcher")
+        while websocket.open:
+            print("Checking")
+            if self.qos[feed_id]:
+                if dt.utcnow() - timedelta(seconds=10) > self.qos[feed_id]:
+                    print("Error")
+                    await websocket.close()
+                    print("Closed")
+            await asyncio.sleep(5)
+        print("Watcher exiting")
 
     async def _connect(self, feed):
         retries = 0
         delay = 1.0
         while retries <= self.retries:
+            self.qos[feed.id] = None
             try:
+                print("Connecting...")
                 async with websockets.connect(feed.address) as websocket:
                     await feed.subscribe(websocket)
-                    await self._handler(websocket, feed.message_handler)
+                    asyncio.ensure_future(self._watch(feed.id, websocket))
+                    await self._handler(websocket, feed.message_handler, feed.id)
             except ConnectionClosed as e:
-                print("Feed {} encountered connection issue {} - reconnecting...".format(feed.id, str(e)))
+                LOG.error("Feed {} encountered connection issue {} - reconnecting...".format(feed.id, repr(e)))
                 await asyncio.sleep(delay)
                 retries += 1
                 delay = delay * 2
-        print("Feed {} failed to reconnect after {} retries - exiting".format(feed.id, retries))
+            except Exception as e:
+                LOG.error("Feed {} encountered an exception {} - reconnecting...".format(feed.id, repr(e)))
+                await asyncio.sleep(delay)
+                retries += 1
+                delay = delay * 2
+        LOG.error("Feed {} failed to reconnect after {} retries - exiting".format(feed.id, retries))
 
-    async def _handler(self, websocket, handler):
+    async def _handler(self, websocket, handler, feed_id):
         async for message in websocket:
             await handler(message)
+            self.qos[feed_id] = dt.utcnow()
