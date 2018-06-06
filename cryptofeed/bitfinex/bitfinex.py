@@ -123,10 +123,10 @@ class Bitfinex(Feed):
             LOG.warning("{} - Unexpected book msg {}".format(self.id, msg))
         
         if L3_BOOK in self.channels:
-            await self.callbacks[L3_BOOK](feed=self.id, pair=pair, book=self.l2_book[pair])
+            await self.callbacks[L3_BOOK](feed=self.id, pair=pair, timestamp=None,
+                                          sequence=None, book=self.l2_book[pair])
         else:
             await self.callbacks[L2_BOOK](feed=self.id, pair=pair, book=self.l2_book[pair])
-
 
     async def _raw_book(self, msg):
         chan_id = msg[0]
@@ -174,7 +174,7 @@ class Bitfinex(Feed):
                 else:
                     self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
                     if price in self.l2_book[pair][side]:
-                        self.l2_book[pair][side][price]
+                        # self.l2_book[pair][side][price]
                         self.l2_book[pair][side][price] += amount
                     else:
                         self.l2_book[pair][side][price] = amount
@@ -184,7 +184,8 @@ class Bitfinex(Feed):
             LOG.warning("{} - Unexpected book msg {}".format(self.id, msg))
         
         if L3_BOOK in self.standardized_channels:
-            await self.callbacks[L3_BOOK](feed=self.id, pair=pair, book=self.l2_book[pair])
+            await self.callbacks[L3_BOOK](feed=self.id, pair=pair, timestamp=None, sequence=None,
+                                          book=self.l2_book[pair])
         else:
             await self.callbacks[L2_BOOK](feed=self.id, pair=pair, book=self.l2_book[pair])        
 

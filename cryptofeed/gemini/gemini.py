@@ -11,9 +11,8 @@ from decimal import Decimal
 from sortedcontainers import SortedDict as sd
 
 from cryptofeed.feed import Feed
-from cryptofeed.callback import Callback
 from cryptofeed.exchanges import GEMINI
-from cryptofeed.defines import L3_BOOK, BID, ASK, TRADES
+from cryptofeed.defines import L3_BOOK, L3_BOOK_UPDATE, BID, ASK, TRADES
 from cryptofeed.standards import pair_std_to_exchange
 
 
@@ -38,12 +37,13 @@ class Gemini(Feed):
                          callbacks=callbacks)
         self.book = {BID: sd(), ASK: sd()}
 
-
     async def _book(self, msg):
+        sequence = msg['sequence']
+        timestamp = msg['timestamp']
         side = BID if msg['side'] == 'bid' else ASK
         price = Decimal(msg['price'])
         remaining = Decimal(msg['remaining'])
-        #delta = Decimal(msg['delta'])
+        # delta = Decimal(msg['delta'])
 
         if msg['reason'] == 'initial':
             self.book[side][price] = remaining
@@ -52,7 +52,8 @@ class Gemini(Feed):
                 del self.book[side][price]
             else:
                 self.book[side][price] = remaining
-        await self.callbacks[L3_BOOK](feed=self.id, pair=self.pair, book=self.book)
+        await self.callbacks[L3_BOOK](feed=self.id, sequence=sequence, timestamp=timestamp,
+                                      pair=self.pair, book=self.book)
 
     async def _trade(self, msg):
         price = Decimal(msg['price'])
@@ -61,7 +62,16 @@ class Gemini(Feed):
         await self.callbacks[TRADES](feed=self.id, id=msg['eventId'], pair=self.pair, side=side, amount=amount, price=price)
 
     async def _update(self, msg):
+        sequence = msg['socket_sequence']
+        if sequence is not 0:
+            timestamp = (
+                Decimal(msg['timestampms']) / Decimal(1000)
+            ) if msg.get('timestampms') else Decimal(msg['timestamp'])
+        else:
+            timestamp = None
         for update in msg['events']:
+            update['timestamp'] = timestamp
+            update['sequence'] = sequence
             if update['type'] == 'change':
                 await self._book(update)
             elif update['type'] == 'trade':

@@ -13,9 +13,8 @@ import requests
 from sortedcontainers import SortedDict as sd
 
 from cryptofeed.feed import Feed
-from cryptofeed.callback import Callback
 from cryptofeed.exchanges import GDAX as GDAX_ID
-from cryptofeed.defines import L2_BOOK, L3_BOOK, BID, ASK, TRADES, TICKER
+from cryptofeed.defines import L2_BOOK, L3_BOOK, L3_BOOK_UPDATE, BID, ASK, TRADES, TICKER
 
 
 LOG = logging.getLogger('feedhandler')
@@ -99,7 +98,7 @@ class GDAX(Feed):
             if self.book[pair][side][price] == 0:
                 del self.book[pair][side][price]
 
-            await self.callbacks[L3_BOOK](feed=self.id, pair=pair, book=self.book[pair])
+            await self.callbacks[L3_BOOK](feed=self.id, sequence=None, timestamp=None, pair=pair, book=self.book[pair])
 
         await self.callbacks[TRADES](
                 feed=self.id,
@@ -175,7 +174,7 @@ class GDAX(Feed):
             self.book[pair][side][price] = size
 
         self.order_map[order_id] = {'price': price, 'size': size}
-        await self.callbacks[L3_BOOK](feed=self.id, pair=pair, book=self.book[pair])
+        await self.callbacks[L3_BOOK](feed=self.id, sequence=None, timestamp=None, pair=pair, book=self.book[pair])
 
     async def _done(self, msg):
         if 'price' not in msg:
@@ -195,7 +194,7 @@ class GDAX(Feed):
             self.book[pair][side][price] -= size
 
         del self.order_map[order_id]
-        await self.callbacks[L3_BOOK](feed=self.id, pair=pair, book=self.book[pair])
+        await self.callbacks[L3_BOOK](feed=self.id, sequence=None, timestamp=None, pair=pair, book=self.book[pair])
 
     async def _change(self, msg):
         order_id = msg['order_id']
@@ -211,7 +210,7 @@ class GDAX(Feed):
         self.book[pair][side][price] -= size
         self.order_map[order_id] = new_size
 
-        await self.callbacks[L3_BOOK](feed=self.id, pair=pair, book=self.book[pair])
+        await self.callbacks[L3_BOOK](feed=self.id, sequence=None, timestamp=None, pair=pair, book=self.book[pair])
 
     async def message_handler(self, msg):
         msg = json.loads(msg, parse_float=Decimal)
@@ -228,7 +227,6 @@ class GDAX(Feed):
                 return
         
             self.seq_no[pair] = msg['sequence']
-            
 
         if 'type' in msg:
             if msg['type'] == 'ticker':

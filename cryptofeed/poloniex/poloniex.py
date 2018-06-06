@@ -51,7 +51,7 @@ class Poloniex(Feed):
             top_vols[pair] = Decimal(top_vols[pair])
         self.callbacks[VOLUME](feed=self.id, **top_vols)
 
-    async def _book(self, msg, chan_id):
+    async def _book(self, msg, chan_id, sequence):
         msg_type = msg[0][0]
         pair = None
         # initial update (i.e. snapshot)
@@ -97,7 +97,8 @@ class Poloniex(Feed):
                 else:
                     LOG.warning("{} - Unexpected message received: {}".format(self.id, msg))
 
-        await self.callbacks[L3_BOOK](feed=self.id, pair=pair, book=self.l3_book[pair])
+        await self.callbacks[L3_BOOK](feed=self.id, sequence=sequence, timestamp=None,
+                                      pair=pair, book=self.l3_book[pair])
 
     async def message_handler(self, msg):
         msg = json.loads(msg, parse_float=Decimal)
@@ -106,6 +107,7 @@ class Poloniex(Feed):
             return
 
         chan_id = msg[0]
+        sequence = msg[1]
         if chan_id == 1002:
             # the ticker channel doesn't have sequence ids
             # so it should be None, except for the subscription
@@ -122,7 +124,7 @@ class Poloniex(Feed):
         elif chan_id <= 200:
             # order book updates - the channel id refers to
             # the trading pair being updated
-            await self._book(msg[2], chan_id)
+            await self._book(msg[2], chan_id, sequence)
         elif chan_id == 1010:
             # heartbeat - ignore
             pass

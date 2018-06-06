@@ -67,6 +67,7 @@ class Bitstamp(Feed):
             await self._process_snapshot()
         data = msg['data']
         chan = msg['channel']
+        timestamp = data['timestamp']
         pair = None
         if chan == 'diff_order_book':
             pair = 'BTC-USD'
@@ -88,7 +89,8 @@ class Bitstamp(Feed):
                         del self.book[pair][side][price]
                 else:
                     self.book[pair][side][price] = size
-        await self.callbacks[L3_BOOK](feed=self.id, pair=pair, book=self.book[pair])
+        await self.callbacks[L3_BOOK](feed=self.id, pair=pair, timestamp=timestamp,
+                                      sequence=None, book=self.book[pair])
 
     async def _trades(self, msg):
         data = msg['data']
