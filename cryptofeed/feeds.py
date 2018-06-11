@@ -26,10 +26,13 @@ _feed_to_exchange_map = {
         BITFINEX: 'book-R0-F0-100',
         HITBTC: 'subscribeOrderbook',
         BITSTAMP: 'diff_order_book',
-        GDAX: 'full',
+        GDAX: L3_BOOK,
         BITMEX: UNSUPPORTED,
-        POLONIEX: UNSUPPORTED, # supported by specifying a trading pair as the channel
+        POLONIEX: UNSUPPORTED,  # supported by specifying a trading pair as the channel
     },
+    L3_BOOK_UPDATE: {
+        GDAX: 'full',
+     },
     TRADES: {
         POLONIEX: UNSUPPORTED,
         HITBTC: 'subscribeTrades',

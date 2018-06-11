@@ -6,8 +6,10 @@ associated with this software.
 '''
 import json
 import logging
+import asyncio
 from decimal import Decimal
 
+import requests
 from sortedcontainers import SortedDict as sd
 
 from cryptofeed.feed import Feed
@@ -45,20 +47,43 @@ class HitBTC(Feed):
                     del self.l3_book[pair][side][price]
                 else:
                     self.l3_book[pair][side][price] = size
-        await self.callbacks[L3_BOOK](feed=self.id, sequence=sequence, timestamp=None,
-                                      pair=pair, book=self.l3_book[pair])
+                await self.callbacks[L3_BOOK_UPDATE](feed=self.id,
+                                                     pair=pair,
+                                                     msg_type='change',
+                                                     timestamp=None,
+                                                     sequence=sequence,
+                                                     side=side,
+                                                     price=price,
+                                                     size=size)
 
-    async def _snapshot(self, msg):
+    async def _book_snapshot(self, pair):
+        url = "https://api.hitbtc.com/api/2/public/orderbook/{}?limit=0".format(pair)
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, requests.get, url)
+        msg = response.json()
+        msg['symbol'] = pair
+        msg['method'] = 'l3snapshot'
+        msg['timestamp'] = None
+        msg['sequence'] = None
+        await self._snapshot(msg, update_book=False)
+
+    async def _snapshot(self, msg, update_book=True):
         pair = pair_exchange_to_std(msg['symbol'])
         sequence = msg['sequence']
-        self.l3_book[pair] = {ASK: sd(), BID: sd()}
+        book = {ASK: sd(), BID: sd()}
         for side in (BID, ASK):
+            book_side = book[side]
             for entry in msg[side]:
                 price = Decimal(entry['price'])
                 size = Decimal(entry['size'])
-                self.l3_book[pair][side][price] = size
-        await self.callbacks[L3_BOOK](feed=self.id, sequence=sequence, timestamp=None,
-                                      pair=pair, book=self.l3_book[pair])
+                book_side[price] = size
+        if update_book:
+            self.l3_book[pair] = book
+        await self.callbacks[L3_BOOK](feed=self.id,
+                                      sequence=sequence,
+                                      timestamp=None,
+                                      pair=pair,
+                                      book=book)
 
     async def _trades(self, msg):
         pair = pair_exchange_to_std(msg['symbol'])
@@ -105,3 +130,6 @@ class HitBTC(Feed):
                         },
                         "id": 123
                     }))
+        if L3_BOOK in self.channels and '_book_snapshot' in self.intervals:
+            for pair in self.pairs:
+                asyncio.ensure_future(self.synthesize_feed(self._book_snapshot, pair))

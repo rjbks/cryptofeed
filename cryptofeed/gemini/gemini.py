@@ -6,8 +6,11 @@ associated with this software.
 '''
 import json
 import logging
+import asyncio
 from decimal import Decimal
+from functools import partial
 
+import requests
 from sortedcontainers import SortedDict as sd
 
 from cryptofeed.feed import Feed
@@ -22,28 +25,62 @@ LOG = logging.getLogger('feedhandler')
 class Gemini(Feed):
     id = GEMINI
 
-    def __init__(self, pairs=None, channels=None, callbacks=None):
+    def __init__(self, pairs=None, channels=None, callbacks=None, **kwargs):
+        self.l3_snapshot_channel = False
         if len(pairs) != 1:
             LOG.error("Gemini requires a websocket per trading pair")
             raise ValueError("Gemini requires a websocket per trading pair")
+        if channels == [L3_BOOK]:
+            self.l3_snapshot_channel = True
+            channels = None
         if channels is not None:
             LOG.error("Gemini does not support different channels")
             raise ValueError("Gemini does not support different channels")
         self.pair = pairs[0]
+        self.exchange_pair = pair_std_to_exchange(pairs[0], 'GEMINI')
 
-        super().__init__('wss://api.gemini.com/v1/marketdata/' + pair_std_to_exchange(self.pair, 'GEMINI'),
+        super().__init__('wss://api.gemini.com/v1/marketdata/' + self.exchange_pair,
                          pairs=None,
                          channels=None,
-                         callbacks=callbacks)
+                         callbacks=callbacks,
+                         **kwargs)
         self.book = {BID: sd(), ASK: sd()}
+
+    async def _book_snapshot(self):
+        # this will not be very useful for rebuilding from l3 messages as
+        # there is no sequence or timestamp
+        loop = asyncio.get_event_loop()
+        url = 'https://api.gemini.com/v1/book/{}'.format(self.exchange_pair)
+        # set limits to 0 to get whole book
+        get_book = partial(requests.get, params={'limit_bids': 0, 'limit_asks': 0})
+        response = await loop.run_in_executor(None, get_book, url)
+        response = response.json()
+        snapshot = {BID: sd(), ASK: sd()}
+
+        for side in (BID, ASK):
+            book_side = snapshot[side]
+            msg_book_side = response[side + 's']
+            for level in msg_book_side:
+                price = Decimal(level['price'])
+                size = Decimal(level['amount'])
+                book_side[price] = size
+
+        await self.callbacks[L3_BOOK](
+                feed=self.id,
+                pair=self.pair,
+                timestamp=None,
+                sequence=None,
+                book=snapshot
+            )
 
     async def _book(self, msg):
         sequence = msg['sequence']
-        timestamp = msg['timestamp']
         side = BID if msg['side'] == 'bid' else ASK
         price = Decimal(msg['price'])
         remaining = Decimal(msg['remaining'])
-        # delta = Decimal(msg['delta'])
+        delta = Decimal(msg['delta'])
+        reason = msg['reason']
+        timestamp = msg['timestamp']
 
         if msg['reason'] == 'initial':
             self.book[side][price] = remaining
@@ -52,21 +89,34 @@ class Gemini(Feed):
                 del self.book[side][price]
             else:
                 self.book[side][price] = remaining
-        await self.callbacks[L3_BOOK](feed=self.id, sequence=sequence, timestamp=timestamp,
-                                      pair=self.pair, book=self.book)
+        await self.callbacks[L3_BOOK_UPDATE](feed=self.id,
+                                             pair=self.pair,
+                                             msg_type=reason,
+                                             timestamp=timestamp,
+                                             sequence=sequence,
+                                             side=side,
+                                             price=price,
+                                             size=delta)
 
     async def _trade(self, msg):
         price = Decimal(msg['price'])
         side = BID if msg['makerSide'] == 'bid' else ASK
         amount = Decimal(msg['amount'])
-        await self.callbacks[TRADES](feed=self.id, id=msg['eventId'], pair=self.pair, side=side, amount=amount, price=price)
+        await self.callbacks[TRADES](feed=self.id,
+                                     id=msg['tid'],
+                                     pair=self.pair,
+                                     side=side,
+                                     amount=amount,
+                                     price=price)
 
     async def _update(self, msg):
         sequence = msg['socket_sequence']
+        # make sure this isnt the initial snapshot as that does not come with a timestamp
         if sequence is not 0:
-            timestamp = (
-                Decimal(msg['timestampms']) / Decimal(1000)
-            ) if msg.get('timestampms') else Decimal(msg['timestamp'])
+            timestamp = \
+                (Decimal(msg['timestampms']) / Decimal(1000)) \
+                if msg.get('timestampms') else \
+                Decimal(msg['timestamp'])
         else:
             timestamp = None
         for update in msg['events']:
@@ -93,4 +143,5 @@ class Gemini(Feed):
             LOG.warning('Invalid message type {}'.format(msg))
 
     async def subscribe(self, *args):
-        return
+        if self.l3_snapshot_channel:
+            asyncio.ensure_future(self.synthesize_feed(self._book_snapshot))

@@ -22,8 +22,8 @@ LOG = logging.getLogger('feedhandler')
 class Bitfinex(Feed):
     id = BITFINEX
 
-    def __init__(self, pairs=None, channels=None, callbacks=None):
-        super().__init__('wss://api.bitfinex.com/ws/2', pairs, channels, callbacks)
+    def __init__(self, pairs=None, channels=None, callbacks=None, **kwargs):
+        super().__init__('wss://api.bitfinex.com/ws/2', pairs, channels, callbacks, **kwargs)
         '''
         maps channel id (int) to a dict of
            symbol: channel's currency
@@ -152,7 +152,6 @@ class Bitfinex(Feed):
                         self.l2_book[pair][side][price] = amount
                         self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
                     else:
-                        self.l2_book[pair][side][price]
                         self.l2_book[pair][side][price] += amount
                         self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
             else:
@@ -174,7 +173,6 @@ class Bitfinex(Feed):
                 else:
                     self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
                     if price in self.l2_book[pair][side]:
-                        # self.l2_book[pair][side][price]
                         self.l2_book[pair][side][price] += amount
                     else:
                         self.l2_book[pair][side][price] = amount
