@@ -44,6 +44,26 @@ class Feed:
             for cb in callbacks:
                 self.callbacks[cb] = callbacks[cb]
 
+    @staticmethod
+    def tz_aware_datetime_from_string(tstring: str) -> datetime:
+        """
+        from ISO compliant string to tz aware datetime object
+        :param tstring: timestamp string
+        :return: tz aware datetime object
+        """
+        # test for UNIX timestamp first
+        try:
+            timestamp = datetime.fromtimestamp(float(tstring), tz=timezone.utc)
+
+        # assume ISO timestamp
+        except ValueError:
+            try:
+                # test for `Z` (Zulu time) instead of offset UTC +0000
+                timestamp = datetime.strptime(tstring, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
+            except ValueError:
+                timestamp = datetime.strptime(tstring, '%Y-%m-%dT%H:%M:%S.%f%z')
+        return timestamp
+
     async def synthesize_feed(self, func, *args, **kwargs):
         interval = self.intervals[func.__name__]
         start_time = time()

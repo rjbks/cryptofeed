@@ -88,7 +88,7 @@ class Poloniex(Feed):
                 elif msg_type == 't':
                     # index 1 is trade id, 2 is side, 3 is price, 4 is amount, 5 is timestamp
                     mtype = 'trade'
-                    timestamp = update[5]
+                    timestamp = self.tz_aware_datetime_from_string(update[5])
                     price = Decimal(update[3])
                     side = ASK if update[2] == 0 else BID
                     amount = Decimal(update[4])

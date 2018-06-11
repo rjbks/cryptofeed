@@ -80,7 +80,7 @@ class Gemini(Feed):
         remaining = Decimal(msg['remaining'])
         delta = Decimal(msg['delta'])
         reason = msg['reason']
-        timestamp = msg['timestamp']
+        timestamp = self.tz_aware_datetime_from_string(msg['timestamp'])
 
         if msg['reason'] == 'initial':
             self.book[side][price] = remaining

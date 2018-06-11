@@ -67,7 +67,7 @@ class Bitstamp(Feed):
             await self._process_snapshot()
         data = msg['data']
         chan = msg['channel']
-        timestamp = data['timestamp']
+        timestamp = self.tz_aware_datetime_from_string(data['timestamp'])
         pair = None
         if chan == 'diff_order_book':
             pair = 'BTC-USD'

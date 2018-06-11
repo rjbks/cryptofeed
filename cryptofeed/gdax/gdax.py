@@ -84,7 +84,7 @@ class GDAX(Feed):
         }
         '''
         sequence = msg['sequence']
-        timestamp = msg['time']
+        timestamp = self.tz_aware_datetime_from_string(msg['time'])
         pair = msg['product_id']
         price = Decimal(msg['price'])
         side = ASK if msg['side'] == 'sell' else BID
@@ -189,7 +189,7 @@ class GDAX(Feed):
         pair = msg['product_id']
         order_id = msg['order_id']
         sequence = msg['sequence']
-        timestamp = msg['time']
+        timestamp = self.tz_aware_datetime_from_string(msg['time'])
 
         if price in self.book[pair][side]:
             self.book[pair][side][price] += size
@@ -219,7 +219,7 @@ class GDAX(Feed):
         pair = msg['product_id']
         size = self.order_map[order_id]['size']
         sequence = msg['sequence']
-        timestamp = msg['time']
+        timestamp = self.tz_aware_datetime_from_string(msg['time'])
 
         if self.book[pair][side][price] - size == 0:
             del self.book[pair][side][price]
@@ -250,7 +250,7 @@ class GDAX(Feed):
 
         size = old_size - new_size
         sequence = msg['sequence']
-        timestamp = msg['time']
+        timestamp = self.tz_aware_datetime_from_string(msg['time'])
         self.book[pair][side][price] -= size
         self.order_map[order_id] = new_size
 
