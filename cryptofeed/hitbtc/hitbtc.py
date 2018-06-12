@@ -44,9 +44,9 @@ class HitBTC(Feed):
                 price = Decimal(entry['price'])
                 size = Decimal(entry['size'])
                 if size == 0:
-                    del self.l3_book[pair][side][price]
+                    self.l3_book.remove_level(pair, side, price)  # [pair][side][price]
                 else:
-                    self.l3_book[pair][side][price] = size
+                    self.l3_book.set_level(pair, side, price, size)  # [pair][side][price] = size
                 await self.callbacks[L3_BOOK_UPDATE](feed=self.id,
                                                      pair=pair,
                                                      msg_type='change',

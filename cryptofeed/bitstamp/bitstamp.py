@@ -10,7 +10,6 @@ import logging
 from decimal import Decimal
 
 import requests
-from sortedcontainers import SortedDict as sd
 
 from cryptofeed.exchanges import BITSTAMP
 from cryptofeed.feed import Feed
@@ -35,21 +34,22 @@ class Bitstamp(Feed):
         self.snapshot_processed = False
 
     async def _process_snapshot(self):
-        self.book = {}
+        self.book = self.order_book_cls(self.id)
         loop = asyncio.get_event_loop()
         btc_usd_url = 'https://www.bitstamp.net/api/order_book/'
         url = 'https://www.bitstamp.net/api/v2/order_book/{}/'
         futures = [loop.run_in_executor(None, requests.get, url.format(pair) if pair != 'BTC-USD' else btc_usd_url) for pair in self.pairs]
 
-        results = []
-        for future in futures:
-            ret = await future
-            results.append(ret)
+        # results = []
+        # for future in futures:
+        #     ret = await future
+        #     results.append(ret)
+
+        results = await asyncio.gather(*futures)
 
         for res, pair in zip(results, self.pairs):
             orders = res.json()
             pair = pair_exchange_to_std(pair)
-            self.book[pair] = {BID: sd(), ASK: sd()}
             self.seq_no[pair] = orders['timestamp']
 
             for side in (BID, ASK):
@@ -57,9 +57,9 @@ class Bitstamp(Feed):
                     price = Decimal(price)
                     size = Decimal(size)
                     if price in self.book[pair][side]:
-                        self.book[pair][side][price] += size
+                        self.book.increment_level(pair, side, price, size)  # [pair][side][price] += size
                     else:
-                        self.book[pair][side][price] = size
+                        self.book.set_level(pair, side, price, size)  # [pair][side][price] = size
         self.snapshot_processed = True
 
     async def _order_book(self, msg):
@@ -86,9 +86,9 @@ class Bitstamp(Feed):
                 size = Decimal(size)
                 if size == 0:
                     if price in self.book[pair][side]:
-                        del self.book[pair][side][price]
+                        self.book.remove_level(pair, side, price)  # [pair][side][price]
                 else:
-                    self.book[pair][side][price] = size
+                    self.book.set_level(pair, side, price, size)  # [pair][side][price] = size
         await self.callbacks[L3_BOOK](feed=self.id, pair=pair, timestamp=timestamp,
                                       sequence=None, book=self.book[pair])
 

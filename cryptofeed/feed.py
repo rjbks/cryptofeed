@@ -9,6 +9,7 @@ from collections import defaultdict
 from time import time
 from datetime import datetime, timezone
 
+from cryptofeed.order_books.sd_order_book import SortedDictOrderBook
 from cryptofeed.callback import Callback
 from cryptofeed.standards import pair_std_to_exchange
 from cryptofeed.feeds import TRADES, TICKER, L2_BOOK, L3_BOOK, L3_BOOK_UPDATE, VOLUME, feed_to_exchange
@@ -17,7 +18,14 @@ from cryptofeed.feeds import TRADES, TICKER, L2_BOOK, L3_BOOK, L3_BOOK_UPDATE, V
 class Feed:
     id = 'NotImplemented'
 
-    def __init__(self, address, pairs=None, channels=None, callbacks=None, intervals=None, default_interval=60*60):
+    def __init__(self,
+                 address,
+                 pairs=None,
+                 channels=None,
+                 callbacks=None,
+                 intervals=None,
+                 default_interval=60*60,
+                 order_book_cls=SortedDictOrderBook):
         self.address = address
         self.standardized_pairs = pairs
         self.standardized_channels = channels
@@ -26,9 +34,10 @@ class Feed:
             self.pairs = [pair_std_to_exchange(pair, self.id) for pair in pairs]
         if channels:
             self.channels = [feed_to_exchange(self.id, chan) for chan in channels]
-        
-        self.l3_book = {}
-        self.l2_book = {}
+
+        self.order_book_cls = order_book_cls
+        self.l3_book = order_book_cls(self.id)
+        self.l2_book = order_book_cls(self.id)
         self.callbacks = {TRADES: Callback(None),
                           TICKER: Callback(None),
                           L2_BOOK: Callback(None),

@@ -8,8 +8,6 @@ import json
 import logging
 from decimal import Decimal
 
-from sortedcontainers import SortedDict as sd
-
 from cryptofeed.feed import Feed
 from cryptofeed.defines import TICKER, TRADES, L3_BOOK, BID, ASK, L2_BOOK
 from cryptofeed.exchanges import BITFINEX
@@ -92,7 +90,7 @@ class Bitfinex(Feed):
         if isinstance(msg[1], list):
             if isinstance(msg[1][0], list):
                 # snapshot so clear book
-                self.l2_book[pair] = {BID: sd(), ASK: sd()}
+                del self.l2_book[pair]
                 for update in msg[1]:
                     price, _, amount = [Decimal(x) for x in update]
                     if amount > 0:
@@ -100,7 +98,7 @@ class Bitfinex(Feed):
                     else:
                         side = ASK
                         amount = abs(amount)
-                    self.l2_book[pair][side][price] = amount
+                    self.l2_book.set_level(pair, side, price, amount)  # [pair][side][price] = amount
             else:
                 # book update
                 price, count, amount = [Decimal(x) for x in msg[1]]
@@ -113,10 +111,10 @@ class Bitfinex(Feed):
 
                 if count > 0:
                     # change at price level
-                    self.l2_book[pair][side][price] = amount
+                    self.l2_book.set_level(pair, side, price, amount)  # [pair][side][price] = amount
                 else:
                     # remove price level
-                    del self.l2_book[pair][side][price]
+                    self.l2_book.remove_level(pair, side, price)  # [pair][side][price]
         elif msg[1] == 'hb':
             pass
         else:
@@ -136,7 +134,7 @@ class Bitfinex(Feed):
         if isinstance(msg[1], list):
             if isinstance(msg[1][0], list):
                 # snapshot so clear book
-                self.l2_book[pair] = {BID: sd(), ASK: sd()}
+                self.l2_book.clear_pair(pair)
                 for update in msg[1]:
                     order_id, price, amount = update
                     price = Decimal(price)
@@ -149,10 +147,10 @@ class Bitfinex(Feed):
                         amount = abs(amount)
 
                     if price not in self.l2_book[pair][side]:
-                        self.l2_book[pair][side][price] = amount
+                        self.l2_book.set_level(pair, side, price, amount)  # [pair][side][price] = amount
                         self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
                     else:
-                        self.l2_book[pair][side][price] += amount
+                        self.l2_book.increment_level(pair, side, price, amount)  # [pair][side][price] += amount
                         self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
             else:
                 # book update
@@ -166,16 +164,16 @@ class Bitfinex(Feed):
 
                 if price == 0:
                     price = self.order_map[order_id]['price']
-                    self.l2_book[pair][side][price] -= self.order_map[order_id]['amount']
+                    self.l2_book.increment_level(pair, side, price, -self.order_map[order_id]['amount'])  # [pair][side][price] -= self.order_map[order_id]['amount']
                     if self.l2_book[pair][side][price] == 0:
-                        del self.l2_book[pair][side][price]
+                        self.l2_book.remove_level(pair, side, price)  # [pair][side][price]
                     del self.order_map[order_id]
                 else:
                     self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
                     if price in self.l2_book[pair][side]:
-                        self.l2_book[pair][side][price] += amount
+                        self.l2_book.increment_level(pair, side, price, amount)  # [pair][side][price] += amount
                     else:
-                        self.l2_book[pair][side][price] = amount
+                        self.l2_book.set_level(pair, side, price, amount)  # [pair][side][price] = amount
         elif msg[1] == 'hb':
             pass
         else:

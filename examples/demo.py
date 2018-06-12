@@ -117,3 +117,7 @@ def main():
         callbacks={L2_BOOK: BookCallback(book)}
     ))
     f.run()
+
+
+if __name__ == '__main__':
+    main()

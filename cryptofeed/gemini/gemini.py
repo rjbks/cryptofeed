@@ -44,7 +44,7 @@ class Gemini(Feed):
                          channels=None,
                          callbacks=callbacks,
                          **kwargs)
-        self.book = {BID: sd(), ASK: sd()}
+        self.book = self.l3_book  # {BID: sd(), ASK: sd()}
 
     async def _book_snapshot(self):
         # this will not be very useful for rebuilding from l3 messages as
@@ -80,18 +80,19 @@ class Gemini(Feed):
         remaining = Decimal(msg['remaining'])
         delta = Decimal(msg['delta'])
         reason = msg['reason']
+        msg_type = msg['type']
         timestamp = self.tz_aware_datetime_from_string(msg['timestamp'])
 
-        if msg['reason'] == 'initial':
-            self.book[side][price] = remaining
+        if reason == 'initial':
+            self.book.set_level(self.pair, side, price, remaining)  # [side][price] = remaining
         else:
             if remaining == 0:
-                del self.book[side][price]
+                self.book.remove_level(self.pair, side, price)  # [side][price]
             else:
-                self.book[side][price] = remaining
+                self.book.set_level(self.pair, side, price, remaining)  # self.book[side][price] = remaining
         await self.callbacks[L3_BOOK_UPDATE](feed=self.id,
                                              pair=self.pair,
-                                             msg_type=reason,
+                                             msg_type=msg_type,
                                              timestamp=timestamp,
                                              sequence=sequence,
                                              side=side,

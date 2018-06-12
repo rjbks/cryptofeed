@@ -27,7 +27,7 @@ class GDAX(Feed):
         super().__init__('wss://ws-feed.gdax.com', pairs=pairs, channels=channels, callbacks=callbacks, **kwargs)
         self.order_map = {}
         self.seq_no = {}
-        self.book = {}
+        self.book = self.l3_book
 
     async def _ticker(self, msg):
         '''

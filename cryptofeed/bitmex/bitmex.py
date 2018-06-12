@@ -4,18 +4,15 @@ Copyright (C) 2017-2018  Bryant Moscon - bmoscon@gmail.com
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-import asyncio
 import json
 import logging
 from decimal import Decimal
 
 import requests
-from sortedcontainers import SortedDict as sd
 
 from cryptofeed.feed import Feed
 from cryptofeed.exchanges import BITMEX
-from cryptofeed.standards import pair_exchange_to_std
-from cryptofeed.defines import L2_BOOK, L3_BOOK, BID, ASK, TRADES, TICKER
+from cryptofeed.defines import L2_BOOK, BID, ASK, TRADES
 
 
 LOG = logging.getLogger('feedhandler')
@@ -38,7 +35,7 @@ class Bitmex(Feed):
         self.partial_received = False
         self.order_id = {}
         for pair in self.pairs:
-            self.l2_book[pair] = {BID: sd(), ASK: sd()}
+            self.l2_book.clear_pair(pair)
             self.order_id[pair] = {}
 
     @staticmethod
@@ -96,7 +93,7 @@ class Bitmex(Feed):
                 price = Decimal(data['price'])
                 pair = data['symbol']
                 size = Decimal(data['size'])
-                self.l2_book[pair][side][price] = size
+                self.l2_book.set_level(pair, side, price, size)  # [pair][side][price] = size
                 self.order_id[pair][data['id']] = (price, size)
         elif msg['action'] == 'update':
             for data in msg['data']:
@@ -104,7 +101,7 @@ class Bitmex(Feed):
                 pair = data['symbol']
                 update_size = Decimal(data['size'])
                 price, _ = self.order_id[pair][data['id']]
-                self.l2_book[pair][side][price] = update_size
+                self.l2_book.set_level(pair, side, price, update_size)  # [pair][side][price] = update_size
                 self.order_id[pair][data['id']] = (price, update_size)
         elif msg['action'] == 'delete':
             for data in msg['data']:
@@ -112,15 +109,14 @@ class Bitmex(Feed):
                 side = BID if data['side'] == 'Buy' else ASK
                 delete_price, delete_size = self.order_id[pair][data['id']]
                 del self.order_id[pair][data['id']]
-                self.l2_book[pair][side][delete_price] -= delete_size
+                self.l2_book.increment_level(pair, side, delete_price, -delete_size)  # [pair][side][delete_price] -= delete_size
                 if self.l2_book[pair][side][delete_price] == 0:
-                    del self.l2_book[pair][side][delete_price]
+                    self.l2_book.remove_level(pair, side, delete_price)  # [pair][side][delete_price]
         else:
             LOG.warning("{} - Unexpected L2 Book message {}".format(self.id, msg))
             return
         
         await self.callbacks[L2_BOOK](feed=self.id, pair=pair, book=self.l2_book[pair])
-
 
     async def message_handler(self, msg):
         msg = json.loads(msg, parse_float=Decimal)

@@ -8,8 +8,6 @@ import json
 import logging
 from decimal import Decimal
 
-from sortedcontainers import SortedDict as sd
-
 from cryptofeed.feed import Feed
 from cryptofeed.defines import BID, ASK, TRADES, TICKER, L3_BOOK, L3_BOOK_UPDATE, VOLUME
 from cryptofeed.standards import pair_std_to_exchange, pair_exchange_to_std
@@ -57,18 +55,18 @@ class Poloniex(Feed):
         if msg_type == 'i':
             pair = msg[0][1]['currencyPair']
             pair = pair_exchange_to_std(pair)
-            self.l3_book[pair] = {BID: sd(), ASK: sd()}
+            # self.l3_book[pair] = {BID: sd(), ASK: sd()}
             # 0 is asks, 1 is bids
             order_book = msg[0][1]['orderBook']
             for key in order_book[0]:
                 amount = Decimal(order_book[0][key])
                 price = Decimal(key)
-                self.l3_book[pair][ASK][price] = amount
+                self.l3_book.set_level(pair, ASK, price, amount)  # [pair][ASK][price] = amount
 
             for key in order_book[1]:
                 amount = Decimal(order_book[1][key])
                 price = Decimal(key)
-                self.l3_book[pair][BID][price] = amount
+                self.l3_book.set_level(pair, BID, price, amount)  # [pair][BID][price] = amount
         else:
             pair = poloniex_id_pair_mapping[chan_id]
             pair = pair_exchange_to_std(pair)
@@ -82,9 +80,9 @@ class Poloniex(Feed):
                     price = Decimal(update[2])
                     amount = Decimal(update[3])
                     if amount == 0:
-                        del self.l3_book[pair][side][price]
+                        self.l3_book.remove_level(pair, side, price)  # [pair][side][price]
                     else:
-                        self.l3_book[pair][side][price] = amount
+                        self.l3_book.set_level(pair, side, price, amount)  # [pair][side][price] = amount
                 elif msg_type == 't':
                     # index 1 is trade id, 2 is side, 3 is price, 4 is amount, 5 is timestamp
                     mtype = 'trade'
