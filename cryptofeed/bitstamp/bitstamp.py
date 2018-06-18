@@ -23,12 +23,14 @@ LOG = logging.getLogger('feedhandler')
 class Bitstamp(Feed):
     id = BITSTAMP
 
-    def __init__(self, pairs=None, channels=None, callbacks=None):
+    def __init__(self, *args, pairs=None, channels=None, callbacks=None, **kwargs):
         super().__init__(
             'wss://ws.pusherapp.com/app/de504dc5763aeef9ff52?protocol=7&client=js&version=2.1.6&flash=false',
+            *args,
             pairs=pairs,
             channels=channels,
-            callbacks=callbacks
+            callbacks=callbacks,
+            **kwargs
         )
         self.seq_no = {}
         self.snapshot_processed = False
@@ -38,13 +40,12 @@ class Bitstamp(Feed):
         loop = asyncio.get_event_loop()
         btc_usd_url = 'https://www.bitstamp.net/api/order_book/'
         url = 'https://www.bitstamp.net/api/v2/order_book/{}/'
-        futures = [loop.run_in_executor(None, requests.get, url.format(pair) if pair != 'BTC-USD' else btc_usd_url) for pair in self.pairs]
-
-        # results = []
-        # for future in futures:
-        #     ret = await future
-        #     results.append(ret)
-
+        futures = [
+            loop.run_in_executor(None,
+                                 requests.get,
+                                 url.format(pair) if pair != 'BTC-USD' else btc_usd_url)
+            for pair in self.pairs
+        ]
         results = await asyncio.gather(*futures)
 
         for res, pair in zip(results, self.pairs):
@@ -54,12 +55,13 @@ class Bitstamp(Feed):
 
             for side in (BID, ASK):
                 for price, size in orders[side+'s']:
-                    price = Decimal(price)
-                    size = Decimal(size)
-                    if price in self.book[pair][side]:
-                        self.book.increment_level(pair, side, price, size)  # [pair][side][price] += size
-                    else:
-                        self.book.set_level(pair, side, price, size)  # [pair][side][price] = size
+                    price = self.make_decimal(price)
+                    size = self.make_decimal(size)
+                    # if price in self.book[pair][side]:
+                    #     self.book.increment(pair, side, price, size)  # [pair][side][price] += size
+                    # else:
+                    #     self.book.set(pair, side, price, size)  # [pair][side][price] = size
+                    await self.book.increment_if_exists_else_set_abs(pair, side, price, size)
         self.snapshot_processed = True
 
     async def _order_book(self, msg):
@@ -82,15 +84,17 @@ class Bitstamp(Feed):
 
         for side in (BID, ASK):
             for price, size in data[side+'s']:
-                price = Decimal(price)
-                size = Decimal(size)
+                price = self.make_decimal(price)
+                size = self.make_decimal(size)
                 if size == 0:
-                    if price in self.book[pair][side]:
-                        self.book.remove_level(pair, side, price)  # [pair][side][price]
+                    # if price in self.book[pair][side]:
+                    #     await self.book.remove(pair, side, price)  # del self.book[pair][side][price]
+                    await self.book.remove_if_exists(pair, side, price)
                 else:
-                    self.book.set_level(pair, side, price, size)  # [pair][side][price] = size
+                    await self.book.set(pair, side, price, size)  # [pair][side][price] = size
+        book = await self.book.get_pair_book(pair)
         await self.callbacks[L3_BOOK](feed=self.id, pair=pair, timestamp=timestamp,
-                                      sequence=None, book=self.book[pair])
+                                      sequence=None, book=book)
 
     async def _trades(self, msg):
         data = msg['data']
@@ -102,8 +106,8 @@ class Bitstamp(Feed):
             pair = pair_exchange_to_std(chan.split('_')[-1])
 
         side = 'BUY' if data['type'] == 0 else 'SELL'
-        amount = Decimal(data['amount'])
-        price = Decimal(data['price'])
+        amount = self.make_decimal(data['amount'])
+        price = self.make_decimal(data['price'])
         await self.callbacks[TRADES](feed=self.id,
                                      pair=pair,
                                      side=side,

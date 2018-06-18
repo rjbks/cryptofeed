@@ -24,29 +24,31 @@ LOG = logging.getLogger('feedhandler')
 class HitBTC(Feed):
     id = HITBTC
 
-    def __init__(self, pairs=None, channels=None, callbacks=None):
+    def __init__(self, *args, pairs=None, channels=None, callbacks=None, **kwargs):
         super().__init__('wss://api.hitbtc.com/api/2/ws',
+                         *args,
                          pairs=pairs,
                          channels=channels,
-                         callbacks=callbacks)
+                         callbacks=callbacks,
+                         **kwargs)
 
     async def _ticker(self, msg):
         await self.callbacks[TICKER](feed=self.id,
                                      pair=pair_exchange_to_std(msg['symbol']),
-                                     bid=Decimal(msg['bid']),
-                                     ask=Decimal(msg['ask']))
+                                     bid=self.make_decimal(msg['bid']),
+                                     ask=self.make_decimal(msg['ask']))
     
     async def _book(self, msg):
         sequence = msg['sequence']
         pair = pair_exchange_to_std(msg['symbol'])
         for side in (BID, ASK):
             for entry in msg[side]:
-                price = Decimal(entry['price'])
-                size = Decimal(entry['size'])
+                price = self.make_decimal(entry['price'])
+                size = self.make_decimal(entry['size'])
                 if size == 0:
-                    self.l3_book.remove_level(pair, side, price)  # [pair][side][price]
+                    await self.l3_book.remove(pair, side, price)  # del self.l3_book[pair][side][price]
                 else:
-                    self.l3_book.set_level(pair, side, price, size)  # [pair][side][price] = size
+                    await self.l3_book.set(pair, side, price, size)  # [pair][side][price] = size
                 await self.callbacks[L3_BOOK_UPDATE](feed=self.id,
                                                      pair=pair,
                                                      msg_type='change',
@@ -74,11 +76,11 @@ class HitBTC(Feed):
         for side in (BID, ASK):
             book_side = book[side]
             for entry in msg[side]:
-                price = Decimal(entry['price'])
-                size = Decimal(entry['size'])
+                price = self.make_decimal(entry['price'])
+                size = self.make_decimal(entry['size'])
                 book_side[price] = size
         if update_book:
-            self.l3_book[pair] = book
+            await self.l3_book.set_pair_book(pair, book)
         await self.callbacks[L3_BOOK](feed=self.id,
                                       sequence=sequence,
                                       timestamp=None,
@@ -88,8 +90,8 @@ class HitBTC(Feed):
     async def _trades(self, msg):
         pair = pair_exchange_to_std(msg['symbol'])
         for update in msg['data']:
-            price = Decimal(update['price'])
-            quantity = Decimal(update['quantity'])
+            price = self.make_decimal(update['price'])
+            quantity = self.make_decimal(update['quantity'])
             side = update['side']
             await self.callbacks[TRADES](feed=self.id,
                                          pair=pair,

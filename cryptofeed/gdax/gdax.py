@@ -10,7 +10,6 @@ import logging
 from decimal import Decimal
 
 import requests
-from sortedcontainers import SortedDict as sd
 
 from cryptofeed.feed import Feed
 from cryptofeed.exchanges import GDAX as GDAX_ID
@@ -23,11 +22,26 @@ LOG = logging.getLogger('feedhandler')
 class GDAX(Feed):
     id = GDAX_ID
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, **kwargs):
-        super().__init__('wss://ws-feed.gdax.com', pairs=pairs, channels=channels, callbacks=callbacks, **kwargs)
+    def __init__(self, *args, pairs=None, channels=None, callbacks=None, **kwargs):
+        super().__init__('wss://ws-feed.gdax.com', *args, pairs=pairs, channels=channels, callbacks=callbacks, **kwargs)
         self.order_map = {}
         self.seq_no = {}
         self.book = self.l3_book
+        # self._precision = None
+
+    # @property
+    # def precision(self):
+    #     if self._precision is None:
+    #         url = 'https://api.gdax.com/products'
+    #         result = requests.get(url).json()
+    #         self._precision = {
+    #             pair: {
+    #                 'base': len(data['base_min_size'].split('.')[-1]),
+    #                 'quoted': len(data['quote_increment'].split('.')[-1])
+    #             }
+    #             for pair, data in result.items()
+    #         }
+    #     return self._precision
 
     async def _ticker(self, msg):
         '''
@@ -65,8 +79,8 @@ class GDAX(Feed):
         '''
         await self.callbacks[TICKER](feed=self.id,
                                      pair=msg['product_id'],
-                                     bid=Decimal(msg['best_bid']),
-                                     ask=Decimal(msg['best_ask']))
+                                     bid=self.make_decimal(msg['best_bid']),
+                                     ask=self.make_decimal(msg['best_ask']))
 
     async def _book_update(self, msg):
         '''
@@ -86,9 +100,9 @@ class GDAX(Feed):
         sequence = msg['sequence']
         timestamp = self.tz_aware_datetime_from_string(msg['time'])
         pair = msg['product_id']
-        price = Decimal(msg['price'])
+        price = self.make_decimal(msg['price'])
         side = ASK if msg['side'] == 'sell' else BID
-        size = Decimal(msg['size'])
+        size = self.make_decimal(msg['size'])
         if self.book:
             maker_order_id = msg['maker_order_id']
 
@@ -96,9 +110,10 @@ class GDAX(Feed):
             if self.order_map[maker_order_id]['size'] <= 0:
                 del self.order_map[maker_order_id]
 
-            self.book[pair][side][price] -= size
-            if self.book[pair][side][price] == 0:
-                del self.book[pair][side][price]
+            # self.book[pair][side][price] -= size
+            # if self.book[pair][side][price] == 0:
+            #     del self.book[pair][side][price]
+            await self.book.decrement_and_remove_if_zero(pair, side, price, size)
 
             await self.callbacks[L3_BOOK_UPDATE](
                 feed=self.id,
@@ -122,31 +137,36 @@ class GDAX(Feed):
             )
 
     async def _pair_level2_snapshot(self, msg):
-        self.l2_book[msg['product_id']] = {
-            BID: sd({
-                Decimal(price): Decimal(amount)
-                for price, amount in msg['bids']
-            }),
-            ASK: sd({
-                Decimal(price): Decimal(amount)
-                for price, amount in msg['asks']
-            })
-        }
+        pair = msg['product_id']
+        book = {
+                BID: {
+                    price: amount
+                    for price, amount in msg['bids']
+                },
+                ASK: {
+                    price: amount
+                    for price, amount in msg['asks']
+                }
+            }
+        await self.l2_book.set_pair_book(pair, book)
 
     async def _pair_level2_update(self, msg):
         pair = msg['product_id']
         for side, price, amount in msg['changes']:
-            price = Decimal(price)
-            amount = Decimal(amount)
-            bidask = self.l2_book[pair][BID if side == 'buy' else ASK]
+            side = BID if side == 'buy' else ASK
+            price = self.make_decimal(price)
+            amount = self.make_decimal(amount)
+            # bidask = self.l2_book[pair][BID if side == 'buy' else ASK]
 
-            if amount == "0":
-                if price in bidask:
-                    del bidask[price]
+            if amount == 0:
+                # if price in bidask:
+                #     del bidask[price]
+                await self.l2_book.remove_if_exists(pair, side, price)
             else:
-                bidask[price] = amount
-
-        await self.callbacks[L2_BOOK](feed=self.id, pair=pair, book=self.l2_book[pair])
+                # bidask[price] = amount
+                await self.l2_book.set(pair, side, price, amount)
+        book = self.l2_book.get_pair_book(pair)
+        await self.callbacks[L2_BOOK](feed=self.id, pair=pair, book=book)
 
     async def _book_snapshot(self, pair, update_book=True, ignore_sequence=False):
         loop = asyncio.get_event_loop()
@@ -154,13 +174,13 @@ class GDAX(Feed):
         result = await loop.run_in_executor(None, requests.get, url)
         orders = result.json()
         seq_no = orders['sequence']
-        book = {BID: sd(), ASK: sd()}
+        book = {BID: {}, ASK: {}}
 
         for side in (BID, ASK):
             book_side = book[side]
             for price, size, order_id in orders[side + 's']:
-                price = Decimal(price)
-                size = Decimal(size)
+                price = self.make_decimal(price)
+                size = self.make_decimal(size)
 
                 if price in book_side:
                     book_side[price] += size
@@ -171,7 +191,7 @@ class GDAX(Feed):
                     self.order_map[order_id] = {'price': price, 'size': size}
 
         if update_book:
-            self.book[pair] = book
+            await self.book.set_pair_book(pair, book)
 
         if not ignore_sequence:
             self.seq_no[pair] = seq_no
@@ -183,18 +203,19 @@ class GDAX(Feed):
                                       book=book)
 
     async def _open(self, msg):
-        price = Decimal(msg['price'])
+        price = self.make_decimal(msg['price'])
         side = ASK if msg['side'] == 'sell' else BID
-        size = Decimal(msg['remaining_size'])
+        size = self.make_decimal(msg['remaining_size'])
         pair = msg['product_id']
         order_id = msg['order_id']
         sequence = msg['sequence']
         timestamp = self.tz_aware_datetime_from_string(msg['time'])
 
-        if price in self.book[pair][side]:
-            self.book[pair][side][price] += size
-        else:
-            self.book[pair][side][price] = size
+        # if price in self.book[pair][side]:
+        #     self.book[pair][side][price] += size
+        # else:
+        #     self.book[pair][side][price] = size
+        await self.book.increment_if_exists_else_set_abs(pair, side, price, size)
 
         self.order_map[order_id] = {'price': price, 'size': size}
         await self.callbacks[L3_BOOK_UPDATE](
@@ -214,25 +235,27 @@ class GDAX(Feed):
         order_id = msg['order_id']
         if order_id not in self.order_map:
             return
-        price = Decimal(msg['price'])
+        price = self.make_decimal(msg['price'])
         side = ASK if msg['side'] == 'sell' else BID
         pair = msg['product_id']
         size = self.order_map[order_id]['size']
         sequence = msg['sequence']
         timestamp = self.tz_aware_datetime_from_string(msg['time'])
 
-        if self.book[pair][side][price] - size == 0:
-            del self.book[pair][side][price]
-        else:
-            self.book[pair][side][price] -= size
+        # if self.book[pair][side][price] - size == 0:
+        #     del self.book[pair][side][price]
+        # else:
+        #     self.book[pair][side][price] -= size
+
+        await self.book.decrement_and_remove_if_zero(pair, side, price, size)
 
         del self.order_map[order_id]
         await self.callbacks[L3_BOOK_UPDATE](
                 feed=self.id,
                 pair=pair,
                 msg_type='done',
-                ts=timestamp,
-                seq=sequence,
+                timestamp=timestamp,
+                sequence=sequence,
                 side=side,
                 price=price,
                 size=size
@@ -242,16 +265,17 @@ class GDAX(Feed):
         order_id = msg['order_id']
         if order_id not in self.order_map:
             return
-        price = Decimal(msg['price'])
+        price = self.make_decimal(msg['price'])
         side = ASK if msg['side'] == 'sell' else BID
-        new_size = Decimal(msg['new_size'])
-        old_size = Decimal(msg['old_size'])
+        new_size = self.make_decimal(msg['new_size'])
+        old_size = self.make_decimal(msg['old_size'])
         pair = msg['product_id']
 
         size = old_size - new_size
         sequence = msg['sequence']
         timestamp = self.tz_aware_datetime_from_string(msg['time'])
-        self.book[pair][side][price] -= size
+        # self.book[pair][side][price] -= size
+        await self.book.increment(pair, side, price, -size)
         self.order_map[order_id] = new_size
 
         await self.callbacks[L3_BOOK_UPDATE](
@@ -267,10 +291,7 @@ class GDAX(Feed):
 
     async def message_handler(self, msg: str):
         msg = json.loads(msg, parse_float=Decimal)
-        if not msg.get('ignore_sequence', False) and \
-                'full' in self.channels and \
-                'product_id' in msg and \
-                'sequence' in msg:
+        if 'full' in self.channels and 'product_id' in msg and 'sequence' in msg:
             pair = msg['product_id']
             if pair not in self.seq_no:
                 self.seq_no[pair] = msg['sequence']

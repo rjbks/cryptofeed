@@ -3,37 +3,54 @@ class OrderBookBase(object):
         self.exchange = exchange
         self._book = None
 
-    def __str__(self):
-        return self._book.__str__()
-
-    def __repr__(self):
-        return self._book.__repr__()
-
-    def __delitem__(self, key):
-        del self._book[key]
-
-    def __len__(self):
-        return len(self._book)
-
-    def __cmp__(self, other):
-        return self._book.__cmp__(other)
-
-    def __eq__(self, other):
-        return self._book.__eq__(other)
-
-    def __contains__(self, item):
-        return item in self._book
-
-    def __iter__(self):
-        return iter(self._book)
-
-    def __getitem__(self, item):
+    async def get_pair_book(self, pair: str)-> dict:
+        """
+        get BID/ASK books for specified pair
+        :param pair: str
+        :return: tuple-> (pair, dict of BID/ASK SortedDicts
+            {BID: sd({p1:s1,...}), ASK: sd({...})})
+        """
         raise NotImplemented
 
-    def __setitem__(self, key, value):
+    async def set_pair_book(self, pair: str, book: dict)-> None:
+        """
+        set BID/ASK books for specified pair
+        deletes all books and corresponding sorted sets for
+        the pair in this exchange prior to setting new values
+        :param pair: str
+        :param book: dict
+        :return: None
+        """
         raise NotImplemented
 
-    def get(self, pair: str, side: str, price, default=None):
+    async def get_pair_side(self, pair: str, side: str)-> dict:
+        """
+        get BID or ASK side of book for specified pair
+        :param pair: str
+        :param side: str
+        :return: SortedDict-> price/size pairs for specified side of pair
+        """
+        raise NotImplemented
+
+    async def price_exists(self, pair: str, side: str, price: str)-> bool:
+        """
+        Checks if price exists in specified book
+        :param pair: str
+        :param side: str
+        :param price: str
+        :return: bool
+        """
+        raise NotImplemented
+
+    async def delete_pair(self, pair: str)-> None:
+        """
+        Removes pair from book
+        :param pair: str
+        :return: None
+        """
+        raise NotImplemented
+
+    async def get(self, pair: str, side: str, price, default=None):
         """
         Fetch level from specified book, returns `default` if not found.
         :param pair: str
@@ -44,7 +61,7 @@ class OrderBookBase(object):
         """
         raise NotImplemented
 
-    def set_level(self, pair: str, side: str, price, size):
+    async def set(self, pair: str, side: str, price, size):
         """
         Sets the price level to the specified size
         :param pair: str
@@ -55,18 +72,52 @@ class OrderBookBase(object):
         """
         raise NotImplemented
 
-    def increment_level(self, pair: str, side: str, price, size):
+    async def increment(self, pair: str, side: str, price, size):
         """
         Increment the size of the specified price level
         :param pair: str
         :param side: str
         :param price: str/float/decimal
-        :param size: str/float/decimal
+        :param size: str/float/decimal-> adds this amount to book
         :return: None
         """
         raise NotImplemented
 
-    def remove_level(self, pair: str, side: str, price):
+    async def increment_if_exists(self, pair: str, side: str, price, size)-> bool:
+        """
+        Increment the size of the specified price level if it exists
+        :param pair: str
+        :param side: str
+        :param price: str/float/decimal
+        :param size: str/float/decimal-> adds this amount to book
+        :return: bool-> price exists
+        """
+        raise NotImplemented
+
+    async def increment_if_exists_else_set_abs(self, pair: str, side: str, price, size)-> bool:
+        """
+        Increment the size of the specified price level if it exists else set
+        price level to the absolute value of the size
+        :param pair: str
+        :param side: str
+        :param price: str/float/decimal
+        :param size: str/float/decimal-> adds this amount to book
+        :return: bool-> exists
+        """
+        raise NotImplemented
+
+    async def decrement_and_remove_if_zero(self, pair: str, side: str, price, size)-> bool:
+        """
+        decrement price level size and then remove if size is 0
+        :param pair: str
+        :param side: str
+        :param price:
+        :param size: negates this amount from book
+        :return: bool-> removed
+        """
+        raise NotImplemented
+
+    async def remove(self, pair: str, side: str, price):
         """
         Remove the specified price level from the book
         :param pair: str
@@ -76,10 +127,22 @@ class OrderBookBase(object):
         """
         raise NotImplemented
 
-    def clear_pair(self, pair: str):
+    async def remove_if_exists(self, pair: str, side: str, price)-> bool:
         """
-        Clear the book for the specified pair
+        remove price level if it exists
         :param pair: str
-        :return: None
+        :param side: str
+        :param price:
+        :return: bool-> removed
+        """
+        raise NotImplemented
+
+    async def remove_if_zero_size(self, pair: str, side: str, price)-> bool:
+        """
+        remove price from book if size is 0
+        :param pair: str
+        :param side: str
+        :param price:
+        :return: bool-> removed
         """
         raise NotImplemented

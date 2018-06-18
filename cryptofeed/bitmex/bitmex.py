@@ -6,6 +6,7 @@ associated with this software.
 '''
 import json
 import logging
+import asyncio
 from decimal import Decimal
 
 import requests
@@ -22,20 +23,25 @@ class Bitmex(Feed):
     id = BITMEX
     api = 'https://www.bitmex.com/api/v1/'
 
-    def __init__(self, pairs=None, channels=None, callbacks=None):
-        super().__init__('wss://www.bitmex.com/realtime', pairs=None, channels=channels, callbacks=callbacks)
+    def __init__(self, *args, pairs=None, channels=None, callbacks=None, **kwargs):
+        super().__init__('wss://www.bitmex.com/realtime',
+                         *args,
+                         pairs=None,
+                         channels=channels,
+                         callbacks=callbacks,
+                         **kwargs)
         active_pairs = self.get_active_symbols()
         for pair in pairs:
             if pair not in active_pairs:
                 raise ValueError("{} is not active on BitMEX".format(pair))
         self.pairs = pairs
-        self._reset()
+        self.loop = asyncio.get_event_loop()
 
-    def _reset(self):
+    async def _reset(self):
         self.partial_received = False
         self.order_id = {}
         for pair in self.pairs:
-            self.l2_book.clear_pair(pair)
+            await self.l2_book.delete_pair(pair)
             self.order_id[pair] = {}
 
     @staticmethod
@@ -74,8 +80,8 @@ class Bitmex(Feed):
             await self.callbacks[TRADES](feed=self.id,
                                          pair=data['symbol'],
                                          side=BID if data['side'] == 'Buy' else ASK,
-                                         amount=data['size'],
-                                         price=data['price'],
+                                         amount=self.make_decimal(data['size']),
+                                         price=self.make_decimal(data['price']),
                                          id=data['trdMatchID'])
     
     async def _book(self, msg):
@@ -90,18 +96,18 @@ class Bitmex(Feed):
         if msg['action'] == 'partial' or msg['action'] == 'insert':
             for data in msg['data']:
                 side = BID if data['side'] == 'Buy' else ASK
-                price = Decimal(data['price'])
+                price = self.make_decimal(data['price'])
                 pair = data['symbol']
-                size = Decimal(data['size'])
-                self.l2_book.set_level(pair, side, price, size)  # [pair][side][price] = size
+                size = self.make_decimal(data['size'])
+                await self.l2_book.set(pair, side, price, size)  # [pair][side][price] = size
                 self.order_id[pair][data['id']] = (price, size)
         elif msg['action'] == 'update':
             for data in msg['data']:
                 side = BID if data['side'] == 'Buy' else ASK
                 pair = data['symbol']
-                update_size = Decimal(data['size'])
+                update_size = self.make_decimal(data['size'])
                 price, _ = self.order_id[pair][data['id']]
-                self.l2_book.set_level(pair, side, price, update_size)  # [pair][side][price] = update_size
+                await self.l2_book.set(pair, side, price, update_size)  # [pair][side][price] = update_size
                 self.order_id[pair][data['id']] = (price, update_size)
         elif msg['action'] == 'delete':
             for data in msg['data']:
@@ -109,14 +115,16 @@ class Bitmex(Feed):
                 side = BID if data['side'] == 'Buy' else ASK
                 delete_price, delete_size = self.order_id[pair][data['id']]
                 del self.order_id[pair][data['id']]
-                self.l2_book.increment_level(pair, side, delete_price, -delete_size)  # [pair][side][delete_price] -= delete_size
-                if self.l2_book[pair][side][delete_price] == 0:
-                    self.l2_book.remove_level(pair, side, delete_price)  # [pair][side][delete_price]
+                # self.l2_book[pair][side][delete_price] -= delete_size
+                # if await self.l2_book[pair][side][delete_price] == 0:
+                #     await self.l2_book.remove_level(pair, side, delete_price)  # [pair][side][delete_price]
+                await self.l2_book.decrement_and_remove_if_zero(pair, side, delete_price, delete_size)
         else:
             LOG.warning("{} - Unexpected L2 Book message {}".format(self.id, msg))
             return
-        
-        await self.callbacks[L2_BOOK](feed=self.id, pair=pair, book=self.l2_book[pair])
+
+        book = await self.l2_book.get_pair_book(pair)
+        await self.callbacks[L2_BOOK](feed=self.id, pair=pair, book=book)
 
     async def message_handler(self, msg):
         msg = json.loads(msg, parse_float=Decimal)
@@ -136,7 +144,7 @@ class Bitmex(Feed):
                 LOG.warning("{} - Unhandled message {}".format(self.id, msg))
 
     async def subscribe(self, websocket):
-        self._reset()
+        await self._reset()
         chans = []
         for channel in self.channels:
             for pair in self.pairs:

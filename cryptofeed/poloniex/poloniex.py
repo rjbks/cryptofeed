@@ -21,14 +21,16 @@ LOG = logging.getLogger('feedhandler')
 class Poloniex(Feed):
     id = POLONIEX
 
-    def __init__(self, pairs=None, channels=None, callbacks=None):
+    def __init__(self, *args, pairs=None, channels=None, callbacks=None, **kwargs):
         if pairs:
             LOG.error("Poloniex does not support pairs")
             raise ValueError("Poloniex does not support pairs")
 
         super().__init__('wss://api2.poloniex.com',
+                         *args,
                          channels=channels,
-                         callbacks=callbacks)
+                         callbacks=callbacks,
+                         **kwargs)
 
     async def _ticker(self, msg):
         # currencyPair, last, lowestAsk, highestBid, percentChange, baseVolume,
@@ -55,18 +57,18 @@ class Poloniex(Feed):
         if msg_type == 'i':
             pair = msg[0][1]['currencyPair']
             pair = pair_exchange_to_std(pair)
-            # self.l3_book[pair] = {BID: sd(), ASK: sd()}
+            await self.l3_book.delete_pair(pair)  # self.l3_book[pair] = {BID: sd(), ASK: sd()}
             # 0 is asks, 1 is bids
             order_book = msg[0][1]['orderBook']
             for key in order_book[0]:
                 amount = Decimal(order_book[0][key])
                 price = Decimal(key)
-                self.l3_book.set_level(pair, ASK, price, amount)  # [pair][ASK][price] = amount
+                await self.l3_book.set(pair, ASK, price, amount)  # [pair][ASK][price] = amount
 
             for key in order_book[1]:
                 amount = Decimal(order_book[1][key])
                 price = Decimal(key)
-                self.l3_book.set_level(pair, BID, price, amount)  # [pair][BID][price] = amount
+                await self.l3_book.set(pair, BID, price, amount)  # [pair][BID][price] = amount
         else:
             pair = poloniex_id_pair_mapping[chan_id]
             pair = pair_exchange_to_std(pair)
@@ -80,9 +82,9 @@ class Poloniex(Feed):
                     price = Decimal(update[2])
                     amount = Decimal(update[3])
                     if amount == 0:
-                        self.l3_book.remove_level(pair, side, price)  # [pair][side][price]
+                        await self.l3_book.remove(pair, side, price)  # [pair][side][price]
                     else:
-                        self.l3_book.set_level(pair, side, price, amount)  # [pair][side][price] = amount
+                        await self.l3_book.set(pair, side, price, amount)  # [pair][side][price] = amount
                 elif msg_type == 't':
                     # index 1 is trade id, 2 is side, 3 is price, 4 is amount, 5 is timestamp
                     mtype = 'trade'
@@ -109,11 +111,12 @@ class Poloniex(Feed):
                                                      price=price,
                                                      size=amount)
 
+        book = await self.l3_book.get_pair_book(pair)
         await self.callbacks[L3_BOOK](feed=self.id,
                                       sequence=sequence,
                                       timestamp=None,
                                       pair=pair,
-                                      book=self.l3_book[pair])
+                                      book=book)
 
     async def message_handler(self, msg):
         msg = json.loads(msg, parse_float=Decimal)
@@ -122,7 +125,6 @@ class Poloniex(Feed):
             return
 
         chan_id = msg[0]
-        sequence = msg[1]
         if chan_id == 1002:
             # the ticker channel doesn't have sequence ids
             # so it should be None, except for the subscription
@@ -139,7 +141,8 @@ class Poloniex(Feed):
         elif chan_id <= 200:
             # order book updates - the channel id refers to
             # the trading pair being updated
-            await self._book(msg[2], chan_id, sequence)
+            seq_id = msg[1]
+            await self._book(msg[2], chan_id, seq_id)
         elif chan_id == 1010:
             # heartbeat - ignore
             pass

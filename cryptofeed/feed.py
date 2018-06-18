@@ -5,11 +5,12 @@ Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
 import asyncio
+from decimal import Decimal
 from collections import defaultdict
 from time import time
 from datetime import datetime, timezone
 
-from cryptofeed.order_books.sd_order_book import SortedDictOrderBook
+from cryptofeed.order_books.sorted_dict.order_book import SortedDictOrderBook
 from cryptofeed.callback import Callback
 from cryptofeed.standards import pair_std_to_exchange
 from cryptofeed.feeds import TRADES, TICKER, L2_BOOK, L3_BOOK, L3_BOOK_UPDATE, VOLUME, feed_to_exchange
@@ -37,7 +38,7 @@ class Feed:
 
         self.order_book_cls = order_book_cls
         self.l3_book = order_book_cls(self.id)
-        self.l2_book = order_book_cls(self.id)
+        self.l2_book = order_book_cls(self.id + '_L2')
         self.callbacks = {TRADES: Callback(None),
                           TICKER: Callback(None),
                           L2_BOOK: Callback(None),
@@ -52,6 +53,15 @@ class Feed:
         if callbacks:
             for cb in callbacks:
                 self.callbacks[cb] = callbacks[cb]
+
+    @staticmethod
+    def make_decimal(value: str)-> Decimal:
+        """
+        make normalized decimal object from string
+        :param value: str
+        :return: decimal.Decimal
+        """
+        return Decimal(value).normalize()
 
     @staticmethod
     def tz_aware_datetime_from_string(tstring: str) -> datetime:
@@ -79,8 +89,6 @@ class Feed:
 
         while True:
             await func(*args, **kwargs)
-            # message = await func(*args, **kwargs)
-            # asyncio.ensure_future(self.message_handler(message))
             await asyncio.sleep(
                 interval - ((time() - start_time) % interval)
             )

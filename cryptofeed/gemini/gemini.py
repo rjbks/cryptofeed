@@ -25,7 +25,7 @@ LOG = logging.getLogger('feedhandler')
 class Gemini(Feed):
     id = GEMINI
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, **kwargs):
+    def __init__(self, *args, pairs=None, channels=None, callbacks=None, **kwargs):
         self.l3_snapshot_channel = False
         if len(pairs) != 1:
             LOG.error("Gemini requires a websocket per trading pair")
@@ -40,6 +40,7 @@ class Gemini(Feed):
         self.exchange_pair = pair_std_to_exchange(pairs[0], 'GEMINI')
 
         super().__init__('wss://api.gemini.com/v1/marketdata/' + self.exchange_pair,
+                         *args,
                          pairs=None,
                          channels=None,
                          callbacks=callbacks,
@@ -61,8 +62,8 @@ class Gemini(Feed):
             book_side = snapshot[side]
             msg_book_side = response[side + 's']
             for level in msg_book_side:
-                price = Decimal(level['price'])
-                size = Decimal(level['amount'])
+                price = self.make_decimal(level['price'])
+                size = self.make_decimal(level['amount'])
                 book_side[price] = size
 
         await self.callbacks[L3_BOOK](
@@ -76,20 +77,20 @@ class Gemini(Feed):
     async def _book(self, msg):
         sequence = msg['sequence']
         side = BID if msg['side'] == 'bid' else ASK
-        price = Decimal(msg['price'])
-        remaining = Decimal(msg['remaining'])
-        delta = Decimal(msg['delta'])
+        price = self.make_decimal(msg['price'])
+        remaining = self.make_decimal(msg['remaining'])
+        delta = self.make_decimal(msg['delta'])
         reason = msg['reason']
         msg_type = msg['type']
-        timestamp = self.tz_aware_datetime_from_string(msg['timestamp'])
+        timestamp = self.tz_aware_datetime_from_string(msg['timestamp']) if msg['timestamp'] else None
 
         if reason == 'initial':
-            self.book.set_level(self.pair, side, price, remaining)  # [side][price] = remaining
+            await self.book.set(self.pair, side, price, remaining)  # [side][price] = remaining
         else:
             if remaining == 0:
-                self.book.remove_level(self.pair, side, price)  # [side][price]
+                await self.book.remove(self.pair, side, price)  # del self.book[side][price]
             else:
-                self.book.set_level(self.pair, side, price, remaining)  # self.book[side][price] = remaining
+                await self.book.set(self.pair, side, price, remaining)  # self.book[side][price] = remaining
         await self.callbacks[L3_BOOK_UPDATE](feed=self.id,
                                              pair=self.pair,
                                              msg_type=msg_type,
@@ -100,9 +101,9 @@ class Gemini(Feed):
                                              size=delta)
 
     async def _trade(self, msg):
-        price = Decimal(msg['price'])
+        price = self.make_decimal(msg['price'])
         side = BID if msg['makerSide'] == 'bid' else ASK
-        amount = Decimal(msg['amount'])
+        amount = self.make_decimal(msg['amount'])
         await self.callbacks[TRADES](feed=self.id,
                                      id=msg['tid'],
                                      pair=self.pair,

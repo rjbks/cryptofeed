@@ -20,8 +20,8 @@ LOG = logging.getLogger('feedhandler')
 class Bitfinex(Feed):
     id = BITFINEX
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, **kwargs):
-        super().__init__('wss://api.bitfinex.com/ws/2', pairs, channels, callbacks, **kwargs)
+    def __init__(self, *args, pairs=None, channels=None, callbacks=None, **kwargs):
+        super().__init__('wss://api.bitfinex.com/ws/2', *args, pairs, channels, callbacks, **kwargs)
         '''
         maps channel id (int) to a dict of
            symbol: channel's currency
@@ -44,8 +44,8 @@ class Bitfinex(Feed):
             pair = pair_exchange_to_std(pair)
             await self.callbacks[TICKER](feed=self.id,
                                          pair=pair,
-                                         bid=Decimal(bid),
-                                         ask=Decimal(ask))
+                                         bid=self.make_decimal(bid),
+                                         ask=self.make_decimal(ask))
 
     async def _trades(self, msg):
         chan_id = msg[0]
@@ -62,8 +62,8 @@ class Bitfinex(Feed):
             await self.callbacks[TRADES](feed=self.id,
                                          pair=pair,
                                          side=side,
-                                         amount=Decimal(amount),
-                                         price=Decimal(price))
+                                         amount=self.make_decimal(amount),
+                                         price=self.make_decimal(price))
 
         if isinstance(msg[1], list):
             # snapshot
@@ -90,18 +90,18 @@ class Bitfinex(Feed):
         if isinstance(msg[1], list):
             if isinstance(msg[1][0], list):
                 # snapshot so clear book
-                del self.l2_book[pair]
+                await self.l2_book.delete_pair(pair)  # del self.l2_book[pair]
                 for update in msg[1]:
-                    price, _, amount = [Decimal(x) for x in update]
+                    price, _, amount = [self.make_decimal(x) for x in update]
                     if amount > 0:
                         side = BID
                     else:
                         side = ASK
                         amount = abs(amount)
-                    self.l2_book.set_level(pair, side, price, amount)  # [pair][side][price] = amount
+                    await self.l2_book.set(pair, side, price, amount)  # [pair][side][price] = amount
             else:
                 # book update
-                price, count, amount = [Decimal(x) for x in msg[1]]
+                price, count, amount = [self.make_decimal(x) for x in msg[1]]
 
                 if amount > 0:
                     side = BID
@@ -111,20 +111,21 @@ class Bitfinex(Feed):
 
                 if count > 0:
                     # change at price level
-                    self.l2_book.set_level(pair, side, price, amount)  # [pair][side][price] = amount
+                    await self.l2_book.set(pair, side, price, amount)  # [pair][side][price] = amount
                 else:
                     # remove price level
-                    self.l2_book.remove_level(pair, side, price)  # [pair][side][price]
+                    await self.l2_book.remove(pair, side, price)  # del self.l2_book[pair][side][price]
         elif msg[1] == 'hb':
             pass
         else:
             LOG.warning("{} - Unexpected book msg {}".format(self.id, msg))
-        
+
+        book = await self.l2_book.get_pair_book(pair)
         if L3_BOOK in self.channels:
             await self.callbacks[L3_BOOK](feed=self.id, pair=pair, timestamp=None,
-                                          sequence=None, book=self.l2_book[pair])
+                                          sequence=None, book=book)
         else:
-            await self.callbacks[L2_BOOK](feed=self.id, pair=pair, book=self.l2_book[pair])
+            await self.callbacks[L2_BOOK](feed=self.id, pair=pair, book=book)
 
     async def _raw_book(self, msg):
         chan_id = msg[0]
@@ -134,11 +135,11 @@ class Bitfinex(Feed):
         if isinstance(msg[1], list):
             if isinstance(msg[1][0], list):
                 # snapshot so clear book
-                self.l2_book.clear_pair(pair)
+                await self.l2_book.delete_pair(pair)  # del self.l2_book[pair]
                 for update in msg[1]:
                     order_id, price, amount = update
-                    price = Decimal(price)
-                    amount = Decimal(amount)
+                    price = self.make_decimal(price)
+                    amount = self.make_decimal(amount)
 
                     if amount > 0:
                         side = BID
@@ -146,15 +147,18 @@ class Bitfinex(Feed):
                         side = ASK
                         amount = abs(amount)
 
-                    if price not in self.l2_book[pair][side]:
-                        self.l2_book.set_level(pair, side, price, amount)  # [pair][side][price] = amount
-                        self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
-                    else:
-                        self.l2_book.increment_level(pair, side, price, amount)  # [pair][side][price] += amount
-                        self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
+                    # if not self.l2_book.price_exists(pair, side, price):  # price not in self.l2_book[pair][side]:
+                    #     await self.l2_book.set(pair, side, price, amount)  # [pair][side][price] = amount
+                    #     self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
+                    # else:
+                    #     await self.l2_book.increment(pair, side, price, amount)  # [pair][side][price] += amount
+                    #     self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
+
+                    await self.l2_book.increment_if_exists_else_set_abs(pair, side, price, amount)
+                    self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
             else:
                 # book update
-                order_id, price, amount = [Decimal(x) for x in msg[1]]
+                order_id, price, amount = [self.make_decimal(x) for x in msg[1]]
 
                 if amount > 0:
                     side = BID
@@ -164,26 +168,28 @@ class Bitfinex(Feed):
 
                 if price == 0:
                     price = self.order_map[order_id]['price']
-                    self.l2_book.increment_level(pair, side, price, -self.order_map[order_id]['amount'])  # [pair][side][price] -= self.order_map[order_id]['amount']
-                    if self.l2_book[pair][side][price] == 0:
-                        self.l2_book.remove_level(pair, side, price)  # [pair][side][price]
+                    # self.l2_book[pair][side][price] -= self.order_map[order_id]['amount']
+                    # if (await self.l2_book.get(pair, side, price)) == 0:
+                    #     await self.l2_book.remove_level(pair, side, price)  # def self.l2_book[pair][side][price]
+                    await self.l2_book.decrement_and_remove_if_zero(pair, side, price, self.order_map[order_id]['amount'])
                     del self.order_map[order_id]
                 else:
                     self.order_map[order_id] = {'price': price, 'amount': amount, 'side': side}
-                    if price in self.l2_book[pair][side]:
-                        self.l2_book.increment_level(pair, side, price, amount)  # [pair][side][price] += amount
-                    else:
-                        self.l2_book.set_level(pair, side, price, amount)  # [pair][side][price] = amount
+                    # if self.l2_book.price_exists(pair, side, price):  # price in self.l2_book[pair][side]:
+                    #     await self.l2_book.increment(pair, side, price, amount)  # [pair][side][price] += amount
+                    # else:
+                    #     await self.l2_book.set(pair, side, price, amount)  # [pair][side][price] = amount
+                    await self.l2_book.increment_if_exists_else_set_abs(pair, side, price, amount)
         elif msg[1] == 'hb':
             pass
         else:
             LOG.warning("{} - Unexpected book msg {}".format(self.id, msg))
-        
+
+        book = await self.l2_book.get_pair_book(pair)
         if L3_BOOK in self.standardized_channels:
-            await self.callbacks[L3_BOOK](feed=self.id, pair=pair, timestamp=None, sequence=None,
-                                          book=self.l2_book[pair])
+            await self.callbacks[L3_BOOK](feed=self.id, pair=pair, timestamp=None, sequence=None, book=book)
         else:
-            await self.callbacks[L2_BOOK](feed=self.id, pair=pair, book=self.l2_book[pair])        
+            await self.callbacks[L2_BOOK](feed=self.id, pair=pair, book=book)
 
     async def message_handler(self, msg):
         msg = json.loads(msg, parse_float=Decimal)
