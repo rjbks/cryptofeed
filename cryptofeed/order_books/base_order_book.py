@@ -111,8 +111,8 @@ class OrderBookBase(object):
         decrement price level size and then remove if size is 0
         :param pair: str
         :param side: str
-        :param price:
-        :param size: negates this amount from book
+        :param price: str/float/decimal
+        :param size: str/float/decimal-> negates this amount from book
         :return: bool-> removed
         """
         raise NotImplemented
@@ -132,7 +132,7 @@ class OrderBookBase(object):
         remove price level if it exists
         :param pair: str
         :param side: str
-        :param price:
+        :param price: str/float/decimal
         :return: bool-> removed
         """
         raise NotImplemented
@@ -142,7 +142,7 @@ class OrderBookBase(object):
         remove price from book if size is 0
         :param pair: str
         :param side: str
-        :param price:
+        :param price: str/float/decimal
         :return: bool-> removed
         """
         raise NotImplemented

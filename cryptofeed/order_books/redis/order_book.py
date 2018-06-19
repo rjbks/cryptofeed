@@ -54,7 +54,7 @@ class RedisOrderBook(OrderBookBase):
         set BID/ASK books for specified pair
         deletes all books and corresponding sorted sets for
         the pair in this exchange prior to setting new values
-        :param pair: str
+        :param pair: str-> ('bid', 'ask')
         :param book: dict
         :return: None
         """
@@ -69,7 +69,7 @@ class RedisOrderBook(OrderBookBase):
         bid_prices = []
         for price, size in book.get(BID, {}).items():
             price = str(Decimal(price).normalize())  # Decimal conversion normalizes precision across price keys
-            bid_prices.extend([float(price), price])
+            bid_prices.extend([float(price), price])  # score, key for ZADD
             bids[price] = str(size)
 
         ask_prices = []
@@ -147,42 +147,45 @@ class RedisOrderBook(OrderBookBase):
             for price, size in book_side.items()
         })
 
-    async def sorted_prices_for_pair(self, pair: str)-> dict:
+    async def sorted_prices_for_pair(self, pair: str, limit: int=-1)-> dict:
         """
         Gets dict (with keys "bid"/"ask") of sorted price lists
         (ascending for asks, descending for bids)
         fo each side
-        :param pair: str
+        :param pair: str-> ('bid', 'ask')
+        :param limit: int
         :return: dict -> {BID: [100, 99], ASK: [101, 102]}
         """
         bidkey = self.make_key(pair, side=BID, prices=True)
         askkey = self.make_key(pair, side=ASK, prices=True)
-        bids, asks = await asyncio.gather(self.pool.zrevrange(bidkey, 0, -1),
-                                          self.pool.zrange(askkey, 0, -1))
+        bids, asks = await asyncio.gather(self.pool.zrevrange(bidkey, 0, limit),
+                                          self.pool.zrange(askkey, 0, limit))
         return {BID: bids, ASK: asks}
 
-    async def sorted_bids_for_pair(self, pair: str)-> list:
+    async def sorted_bids_for_pair(self, pair: str, limit: int=-1)-> list:
         """
         gets a sorted list of all bids (descending)
-        :param pair: str
+        :param pair: str-> ('bid', 'ask')
+        :param limit: int
         :return: list -> descending bids
         """
         key = self.make_key(pair, side=BID, prices=True)
-        return [Decimal(price) for price in await self.pool.zrevrange(key, 0, -1)]
+        return [Decimal(price) for price in await self.pool.zrevrange(key, 0, limit)]
 
-    async def sorted_asks_for_pair(self, pair: str)-> list:
+    async def sorted_asks_for_pair(self, pair: str, limit: int=-1)-> list:
         """
         gets a sorted list of all asks (ascending)
-        :param pair: str
+        :param pair: str-> ('bid', 'ask')
+        :param limit: int
         :return: list -> ascending asks
         """
         key = self.make_key(pair, side=ASK, prices=True)
-        return [Decimal(price) for price in await self.pool.zrange(key, 0, -1)]
+        return [Decimal(price) for price in await self.pool.zrange(key, 0, limit)]
 
     async def delete_pair(self, pair: str)-> None:
         """
         Removes pair from book
-        :param pair: str
+        :param pair: str-> ('bid', 'ask')
         :return: None
         """
         bidkey = self.make_key(pair, side=BID)
@@ -198,8 +201,8 @@ class RedisOrderBook(OrderBookBase):
         """
         Checks if price exists in specified book
         :param pair: str
-        :param side: str
-        :param price: str
+        :param side: str-> ('bid', 'ask')
+        :param price: decimal/str/float
         :return: bool
         """
         key = self.make_key(pair, side=side)
@@ -222,7 +225,7 @@ class RedisOrderBook(OrderBookBase):
         """
         Sets the price level to the specified size
         :param pair: str
-        :param side: str
+        :param side: str ('bid', 'ask')
         :param price: str/float/decimal
         :param size: str/float/decimal
         :return: None
@@ -239,7 +242,7 @@ class RedisOrderBook(OrderBookBase):
         """
         Remove the specified price level from the book and sorted set
         :param pair: str
-        :param side: str
+        :param side: str ('bid', 'ask')
         :param price: decimal.Decimal
         :return: None
         """
